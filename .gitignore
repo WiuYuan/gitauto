@@ -1,0 +1,8 @@
+.webui_port
+__pycache__
+node_modules
+* copy*
+logical_tree*.json
+tool_calls_path*.json
+run_backend.log
+.DS_Store
