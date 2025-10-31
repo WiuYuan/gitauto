@@ -615,7 +615,7 @@ class LLM:
         check_start_prompt: str = None,
         human_check_before_calling: bool = False,
     ) -> str:
-        dag = SummaryAttentionDAG(m_layers=1, llm=self, parent_window=2)
+        dag = SummaryAttentionDAG(m_layers=1, llm=self, parent_window=5, verbose=False)
         # 记录每个step生成的输出
         all_texts = []
         func_dict = {func.__name__: func for func in tools} if tools else {}
@@ -623,16 +623,17 @@ class LLM:
 
         for step in range(max_steps):
             print(f"\n[INFO] === Prompt step {step+1} ===\n")
-            self.ec.send_message(
-                {
-                    "type": "info",
-                    "data": {
-                        "category": f"STEP {step + 1}",
-                        "content": f"=== Prompt step {step+1} ===",
-                        "level_delta": 1,
-                    },
-                }
-            )
+            if verbose:
+                self.ec.send_message(
+                    {
+                        "type": "info",
+                        "data": {
+                            "category": f"STEP {step + 1}",
+                            "content": f"=== Prompt step {step+1} ===",
+                            "level_delta": 1,
+                        },
+                    }
+                )
             if self.ec is not None:
                 guidance = self.ec.get_all_guidance()
                 if len(guidance) != 0:
@@ -758,16 +759,17 @@ class LLM:
                     "\n", "\n\t"
                 )
                 # format_prompt = format_prompt.replace("\n", "\n    ")
-                self.ec.send_message(
-                    {
-                        "type": "info",
-                        "data": {
-                            "category": "INPUT",
-                            "content": format_prompt,
-                            "level_delta": 0,
-                        },
-                    }
-                )
+                if verbose:
+                    self.ec.send_message(
+                        {
+                            "type": "info",
+                            "data": {
+                                "category": "INPUT",
+                                "content": format_prompt,
+                                "level_delta": 0,
+                            },
+                        }
+                    )
                 # print(f"  [INPUT]\n    {format_prompt}\n")
                 format_tool_calls = Tool_Calls.summarize_tool_calls(
                     previous_tool_calls[max_chunk_id:]
@@ -808,16 +810,17 @@ class LLM:
                     if not out_text.startswith(check_start_prompt):
                         print("\n[WARN] Check failed, regenerating...\n")
 
-            self.ec.send_message(
-                {
-                    "type": "info",
-                    "data": {
-                        "category": "",
-                        "content": "",
-                        "level_delta": -1,
-                    },
-                }
-            )
+            if verbose:
+                self.ec.send_message(
+                    {
+                        "type": "info",
+                        "data": {
+                            "category": "",
+                            "content": "",
+                            "level_delta": -1,
+                        },
+                    }
+                )
 
             all_texts.append(out_text)
 
@@ -876,26 +879,27 @@ class LLM:
                             result = "Human prevents this operation"
                     else:
                         result = func_dict[func_name](**args)
-                    self.ec.send_message(
-                        {
-                            "type": "info",
-                            "data": {
-                                "category": "RESULT",
-                                "content": result,
-                                "level_delta": 0,
-                            },
-                        }
-                    )
-                    self.ec.send_message(
-                        {
-                            "type": "info",
-                            "data": {
-                                "category": "",
-                                "content": "",
-                                "level_delta": -1,
-                            },
-                        }
-                    )
+                    if verbose:
+                        self.ec.send_message(
+                            {
+                                "type": "info",
+                                "data": {
+                                    "category": "RESULT",
+                                    "content": result,
+                                    "level_delta": 0,
+                                },
+                            }
+                        )
+                        self.ec.send_message(
+                            {
+                                "type": "info",
+                                "data": {
+                                    "category": "",
+                                    "content": "",
+                                    "level_delta": -1,
+                                },
+                            }
+                        )
                 else:
                     result = f"[Error] Function {func_name} not found"
 
@@ -909,16 +913,17 @@ class LLM:
                 )
 
             tc.extend(new_tool_calls)
-            self.ec.send_message(
-                {
-                    "type": "info",
-                    "data": {
-                        "category": "INFO",
-                        "content": f"",
-                        "level_delta": -1,
-                    },
-                }
-            )
+            if verbose:
+                self.ec.send_message(
+                    {
+                        "type": "info",
+                        "data": {
+                            "category": "INFO",
+                            "content": f"",
+                            "level_delta": -1,
+                        },
+                    }
+                )
             if tc.UpdataFunc is not None:
                 tc.UpdataFunc()
 

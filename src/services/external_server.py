@@ -123,7 +123,7 @@ class ExternalServer:
                     continue
         raise RuntimeError("❌ No free port available!")
 
-    async def _handle_client(self, websocket, path):
+    async def _handle_client(self, websocket, path=None):
         self.connected_clients.add(websocket)
         print(f"📡 Client connected. Total: {len(self.connected_clients)}")
 

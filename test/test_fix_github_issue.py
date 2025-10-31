@@ -13,16 +13,25 @@ from src.services.custom_tools import custom_tools, clean_training_logs
 import glob
 import os
 
+import argparse
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--num", type=int, default=0, help="输入数字参数")
+args = parser.parse_args()
+
+num = args.num
+print("num =", num)
+
 # llm = LLM(model_name="qwen3:8b")
 with open(".webui_port", "r", encoding="utf-8") as f:
     port = int(f.read())
-ec = ExternalClient(port=port)
+# ec = ExternalClient(port=port)
 llm = LLM(
     model_name="deepseek-chat",
     llm_url="https://api.deepseek.com/chat/completions",
     api_key="sk-2332c3d16a8d4f4ba1b3503074ba04c5",
     format="openai",
-    ec=ec,
+    # ec=ec,
 )
 # llm = LLM(
 #     model_name="gpt-5-2025-08-07",
@@ -37,32 +46,27 @@ llm = LLM(
 #     format="openai",
 # )
 
-
+print("A")
 ct = custom_tools(
-    HOST_DIR="/Users/yuanwen/Desktop/Docker_Environment/intern2/3/agent/issue_fix",
-    HOST_DATA_DIR="/Users/yuanwen/Desktop/Docker_Environment/intern2/3/data/issue_fix",
-    MAIN_DIR="/workspace",
-    MAIN_DATA_DIR="/data",
+    MAIN_DIR=f"/data/wyuan/workspace/agent_pro/agent/{num}",
+    MAIN_DATA_DIR=f"/data/wyuan/workspace/agent_pro/agent/{num}",
     PYTHON_PATH="python",
     MATLAB_PATH="/Applications/MATLAB_R2023b.app/bin/matlab",
-    ENV_NAME="fix_github_issue",
-    LOCAL_TMP_PATH="/Users/yuanwen/Desktop/Docker_Environment/intern2/3/tmp",
-    REMOTE_TMP_PATH="/tmp",
-    BASE_ENV="python:3.7",
-    PMC_URL="https://pmc.ncbi.nlm.nih.gov/articles/PMC7567795",
+    LOCAL_TMP_PATH=f"/data/wyuan/workspace/agent_pro/tmp/{num}",
     llm=llm,
+    verbose=False,
 )
 from src.services.llm import load_messages, save_messages
 
 tool_calls_path = (
-    "/Users/yuanwen/Desktop/Docker_Environment/intern2/3/code/tool_calls_path.json"
+    f"/data/wyuan/workspace/agent_pro/tmp/{num}/tool_calls_path.json"
 )
 env_tool_calls_path = "/workspace/tool_calls_path.json"
 
 import requests
 from bs4 import BeautifulSoup
 
-
+print("A")
 def fetch_problem_statement(issue_url: str) -> str:
     headers = {"User-Agent": "Mozilla/5.0 (compatible; SWEAgentFetcher/1.1)"}
 
@@ -148,7 +152,7 @@ def build_sample_from_github(
     # 构造 sample
     sample = {
         "repo": repo,
-        "repo_clone_url": f"https://github.com/{repo}.git",
+        "repo_clone_url": f"https://githubfast.com/{repo}.git",
         "issue_url": issue_url,
         "base_commit": base_commit,
         "problem_statement": problem_text,
@@ -156,37 +160,42 @@ def build_sample_from_github(
     return sample
 
 
-from datasets import load_from_disk
+import os
+os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"  # 使用清华镜像
+from datasets import load_dataset
 
-ds = load_from_disk(
-    "/Users/yuanwen/Desktop/Docker_Environment/intern2/4/data/SWE-bench_Lite"
-)
+ds = load_dataset("princeton-nlp/SWE-bench_Lite")
+
 print(ds)
-sample = ds[0]
-
+sample = ds["test"][num]
+print("A")
 # sample = build_sample_from_github(
 #     repo_url="https://github.com/SWE-agent/test-repo",
 #     issue_url="https://github.com/SWE-agent/test-repo/issues/1",
 # )
 # sample["instance_id"] = "test"
 print(sample)
-
-
+print("A")
+import time
+time.sleep(1)
 package_name = "package"
-
+print("B")
 tc = Tool_Calls(PATH=tool_calls_path, ENV_PATH=env_tool_calls_path, MAX_CHAR=50000)
+print("B")
+time.sleep(1)
 tc.clear()
 
 # launch_web()
 os.environ["NO_PROXY"] = "*"
+print("C")
 message = fix_github_error(
     sample=sample,
     ct=ct,
-    max_steps=10000,
+    max_steps=50,
     tc=tc,
-    tree_filepath="/Users/yuanwen/Desktop/Docker_Environment/intern2/3/code/logical_tree_fix_issue.json",
+    tree_filepath=f"/data/wyuan/workspace/agent_pro/tmp/{num}/logical_tree.json",
     package_name=package_name,
-    verbose=True,
+    verbose=False,
     whether_recreate=False,
-    save_filepath="/workspace/fix_issue.txt",
+    save_filepath=f"{ct.MAIN_DIR}/fix_issue.txt",
 )

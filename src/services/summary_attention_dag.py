@@ -58,6 +58,7 @@ class SummaryAttentionDAG:
         llm: Any,
         default_instruction: Optional[str] = None,
         parent_window: int = 10,
+        verbose: bool = True
     ):
         assert m_layers >= 1, "m_layers must be >= 1"
         self.m_layers = m_layers
@@ -69,6 +70,7 @@ class SummaryAttentionDAG:
         self.G = nx.DiGraph()
         # Track current N (number of chunks / width)
         self.N = 0
+        self.verbose = verbose
 
     # --------------------------- Public API ---------------------------
     def add_chunk(self, chunk_text: str) -> None:
@@ -171,7 +173,7 @@ class SummaryAttentionDAG:
             "prompt": prompt,
             "meta": {"layer": L, "indices": idxs},
         }
-        return self.llm.query(info["prompt"], verbose=True)
+        return self.llm.query(info["prompt"], verbose=self.verbose)
 
     def export_json(self) -> str:
         """
@@ -238,7 +240,7 @@ class SummaryAttentionDAG:
             "prompt": prompt,
             "meta": {"layer": layer, "idx": idx},
         }
-        summary = self.llm.query(info["prompt"], verbose=True)
+        summary = self.llm.query(info["prompt"], verbose=self.verbose)
         self.G.nodes[node_key]["state"] = NeuronState(
             summary_text=summary, last_update_ts=time.time()
         )
@@ -279,7 +281,7 @@ class SummaryAttentionDAG:
             "prompt": prompt,
             "meta": {"node": node_key},
         }
-        response = self.llm.query(info["prompt"], verbose=True)
+        response = self.llm.query(info["prompt"], verbose=self.verbose)
         try:
             # Expecting a small JSON or delimiter-based response; allow fallback parsing
             parsed = self._parse_update_response(response)
@@ -424,7 +426,7 @@ class SummaryAttentionDAG:
         state = self.G.nodes[node_key].get("state")
         return state.summary_text if state else None
 
-    def recompute_all_states(self, verbose: bool = True) -> None:
+    def recompute_all_states(self) -> None:
         """
         Recompute the summary_text (state) for all nodes except layer 0 leaves.
         This does NOT change parameters (instructions).
@@ -439,8 +441,8 @@ class SummaryAttentionDAG:
                     continue
                 self._recompute_node_state(node_key)
                 total += 1
-                if verbose:
+                if self.verbose:
                     print(f"[RECOMPUTE] Layer {layer}, idx {idx} updated.")
 
-        if verbose:
+        if self.verbose:
             print(f"[INFO] Recomputed {total} nodes in total (excluding layer 0).")

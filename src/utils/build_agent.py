@@ -88,57 +88,61 @@ def solve_goal_list(
             func_name="func_guide", result=guidance, guidance="Will Return Guidance"
         )
         while True:
-            ct.llm.ec.send_message(
-                {
-                    "type": "info",
-                    "data": {
-                        "category": "LLM",
-                        "content": "Query with Tools",
-                        "level_delta": 1,
-                    },
-                }
-            )
+            if verbose:
+                ct.llm.ec.send_message(
+                    {
+                        "type": "info",
+                        "data": {
+                            "category": "LLM",
+                            "content": "Query with Tools",
+                            "level_delta": 1,
+                        },
+                    }
+                )
             # print(f"[LLM] Query with Tools Start")
             # formatted_prompt = prompt.replace("\n", "\n    ")
             # print(f"  [INPUT]\n    {formatted_prompt}")
-            ct.llm.ec.send_message(
-                {
-                    "type": "info",
-                    "data": {
-                        "category": "INPUT",
-                        "content": prompt,
-                        "level_delta": 0,
-                    },
-                }
-            )
+            if verbose:
+                ct.llm.ec.send_message(
+                    {
+                        "type": "info",
+                        "data": {
+                            "category": "INPUT",
+                            "content": prompt,
+                            "level_delta": 0,
+                        },
+                    }
+                )
             text, tool_calls = ct.llm.query_messages_with_tools(
                 messages + extra_guide_tool_call,
                 tools=tools_add_child,
                 verbose=verbose,
             )
-            ct.llm.ec.send_message(
-                {
-                    "type": "info",
-                    "data": {
-                        "category": "",
-                        "content": "",
-                        "level_delta": -1,
-                    },
-                }
-            )
+            if verbose:
+                ct.llm.ec.send_message(
+                    {
+                        "type": "info",
+                        "data": {
+                            "category": "",
+                            "content": "",
+                            "level_delta": -1,
+                        },
+                    }
+                )
             if text.startswith(check_start_prompt) == False:
                 print(f"\nCheck Text Start Failed, Generate Again!\n")
                 continue
-            ct.llm.ec.send_message(
-                {
-                    "type": "info",
-                    "data": {
-                        "category": "SAMPLE",
-                        "content": "Sampling Next Steps",
-                        "level_delta": 1,
-                    },
-                }
-            )
+            if verbose:
+                ct.llm.ec.send_message(
+                    {
+                        "type": "info",
+                        "data": {
+                            "category": "SAMPLE",
+                            "content": "Sampling Next Steps",
+                            "level_delta": 1,
+                        },
+                    }
+                )
             # print("\n[SAMPLE] Sampling Next Steps")
             sample_next_step = ["Resample"]
             for call in tool_calls:
@@ -198,34 +202,48 @@ def solve_goal_list(
                     result="Will Return Guidance",
                     guidance=guidance,
                 )
-                ct.llm.ec.send_message(
-                    {
-                        "type": "info",
-                        "data": {
-                            "category": "LLM",
-                            "content": "Select Automatically",
-                            "level_delta": 1,
-                        },
-                    }
-                )
+                if verbose:
+                    ct.llm.ec.send_message(
+                        {
+                            "type": "info",
+                            "data": {
+                                "category": "LLM",
+                                "content": "Select Automatically",
+                                "level_delta": 1,
+                            },
+                        }
+                    )
                 # print(f"[LLM] Query with Tools Start")
                 # formatted_prompt = prompt.replace("\n", "\n    ")
                 # print(f"  [INPUT]\n    {formatted_prompt}")
-                ct.llm.ec.send_message(
-                    {
-                        "type": "info",
-                        "data": {
-                            "category": "INPUT",
-                            "content": prompt,
-                            "level_delta": 0,
-                        },
-                    }
-                )
+                if verbose:
+                    ct.llm.ec.send_message(
+                        {
+                            "type": "info",
+                            "data": {
+                                "category": "INPUT",
+                                "content": prompt,
+                                "level_delta": 0,
+                            },
+                        }
+                    )
                 text, tool_calls = ct.llm.query_messages_with_tools(
                     messages + tc.get_value() + choose_add_child_tool_call,
                     tools=tools_add_child,
                     verbose=verbose,
                 )
+                if verbose:
+                    ct.llm.ec.send_message(
+                        {
+                            "type": "info",
+                            "data": {
+                                "category": "",
+                                "content": "",
+                                "level_delta": -1,
+                            },
+                        }
+                    )
+            if verbose:
                 ct.llm.ec.send_message(
                     {
                         "type": "info",
@@ -236,16 +254,6 @@ def solve_goal_list(
                         },
                     }
                 )
-            ct.llm.ec.send_message(
-                {
-                    "type": "info",
-                    "data": {
-                        "category": "",
-                        "content": "",
-                        "level_delta": -1,
-                    },
-                }
-            )
             new_tool_calls = [
                 {
                     "role": "assistant",
@@ -514,8 +522,8 @@ def get_github_issue(sample: dict) -> dict:
 
     return {
         "repo": repo,
-        "repo_clone_url": f"https://github.com/{repo}.git",
-        "issue_url": f"https://github.com/{repo}/issues/{issue_num}",
+        "repo_clone_url": f"https://ghfast.top/https://github.com/{repo}.git",
+        "issue_url": f"https://ghfast.top/https://github.com/{repo}/issues/{issue_num}",
         "base_commit": base_commit,
         "problem": sample.get("problem_statement", "").strip(),
     }
@@ -563,18 +571,18 @@ def fix_github_error(
         )
     print("\n[INFO] Cloning GitHub repository...\n")
 
-    ct.func_cmd(f"cd {ct.MAIN_DIR} && rm -rf ./*")
-
+    ct.func_cmd(f"rm -rf ./*")
+    print(github_url)
     result = ct.func_git_clone(github_url, package_name)
 
     new_tool_calls = get_func_tool_call(
         func_name="func_cmd",
         result=result,
-        command=f"cd {ct.MAIN_DIR} && git clone {github_url} {package_name}",
+        command=f"git clone {github_url} {package_name}",
     )
     tc.extend(new_tool_calls)
     if base_commit is not None:
-        command = f"cd {ct.MAIN_DIR} && cd {package_name} && git checkout {base_commit}"
+        command = f"cd {package_name} && git checkout {base_commit}"
         result = ct.func_cmd(command)
 
         new_tool_calls = get_func_tool_call(

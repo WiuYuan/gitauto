@@ -144,11 +144,11 @@ class custom_tools:
         if len(self.ENV_NAME) != 0:
             container_path = self._write_to_remote_tmp("_func_cmd", command)
             run_cmd = f"docker exec {self.ENV_NAME} bash -c 'cd {self.MAIN_DIR} && bash {container_path}'"
-            result = subprocess.run(run_cmd, shell=True, capture_output=True)
+            result = subprocess.run(run_cmd, shell=True, capture_output=True, env=os.environ)
         else:
             local_path = self._write_to_local_tmp("_func_cmd", command)
             run_cmd = f"bash -c 'cd {self.MAIN_DIR} && bash {local_path}'"
-            result = subprocess.run(run_cmd, shell=True, capture_output=True)
+            result = subprocess.run(run_cmd, shell=True, capture_output=True, env=os.environ)
         try:
             output = result.stdout.decode("utf-8")
             output = clean_training_logs(output)
