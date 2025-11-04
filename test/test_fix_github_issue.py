@@ -1,6 +1,6 @@
 from src.services.llm import LLM
 from src.services.logical_tree import LogicalTree
-from src.utils.build_agent import query_based_on_tool_calls, fix_github_error
+from src.utils.workflow import query_based_on_tool_calls, fix_github_error
 from typing import Callable, List, Dict, Any
 from src.services.agents import Tool_Calls
 from src.services.external_client import ExternalClient
@@ -29,7 +29,7 @@ with open(".webui_port", "r", encoding="utf-8") as f:
 llm = LLM(
     model_name="deepseek-chat",
     llm_url="https://api.deepseek.com/chat/completions",
-    api_key="sk-2332c3d16a8d4f4ba1b3503074ba04c5",
+    api_key="sk-10937ce390644e3faf0016669a46a005",
     format="openai",
     # ec=ec,
 )
@@ -46,38 +46,40 @@ llm = LLM(
 #     format="openai",
 # )
 
-print("A")
+# print("A")
+import os
 ct = custom_tools(
-    MAIN_DIR=f"/data/wyuan/workspace/agent_pro/agent/{num}",
-    MAIN_DATA_DIR=f"/data/wyuan/workspace/agent_pro/agent/{num}",
+    MAIN_DIR=f"/data/yuanwen/workspace/swe-solution/lite/{num}",
+    WRITE_DIR=f"/data/yuanwen/workspace/swe-solution/lite/{num}",
+    MAIN_DATA_DIR=f"/data/yuanwen/workspace/swe-solution/lite/{num}",
     PYTHON_PATH="python",
-    MATLAB_PATH="/Applications/MATLAB_R2023b.app/bin/matlab",
-    LOCAL_TMP_PATH=f"/data/wyuan/workspace/agent_pro/tmp/{num}",
+    # MATLAB_PATH="/Applications/MATLAB_R2023b.app/bin/matlab",
+    LOCAL_TMP_PATH=f"/data/yuanwen/workspace/tmp/{num}",
     llm=llm,
     verbose=False,
 )
+os.makedirs(ct.MAIN_DIR, exist_ok=True)
 from src.services.llm import load_messages, save_messages
 
 tool_calls_path = (
-    f"/data/wyuan/workspace/agent_pro/tmp/{num}/tool_calls_path.json"
+    f"/data/yuanwen/workspace/tmp/{num}/tool_calls_path.json"
 )
 env_tool_calls_path = "/workspace/tool_calls_path.json"
 
 import requests
 from bs4 import BeautifulSoup
 
-print("A")
 def fetch_problem_statement(issue_url: str) -> str:
     headers = {"User-Agent": "Mozilla/5.0 (compatible; SWEAgentFetcher/1.1)"}
 
     # ✅ 设置代理（可根据你的代理端口修改）
-    proxies = {
-        "http": "http://127.0.0.1:7897",
-        "https": "http://127.0.0.1:7897",
-    }
+    # proxies = {
+    #     "http": "http://127.0.0.1:7897",
+    #     "https": "http://127.0.0.1:7897",
+    # }
 
     # ✅ 设置超时防止卡死
-    resp = requests.get(issue_url, headers=headers, proxies=proxies, timeout=15)
+    resp = requests.get(issue_url, headers=headers, timeout=15)
 
     if resp.status_code != 200:
         raise RuntimeError(f"无法访问 {issue_url}, 状态码: {resp.status_code}")
@@ -152,7 +154,7 @@ def build_sample_from_github(
     # 构造 sample
     sample = {
         "repo": repo,
-        "repo_clone_url": f"https://githubfast.com/{repo}.git",
+        "repo_clone_url": f"https://github.com/{repo}.git",
         "issue_url": issue_url,
         "base_commit": base_commit,
         "problem_statement": problem_text,
@@ -160,8 +162,8 @@ def build_sample_from_github(
     return sample
 
 
-import os
-os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"  # 使用清华镜像
+# import os
+# os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"  # 使用清华镜像
 from datasets import load_dataset
 
 ds = load_dataset("princeton-nlp/SWE-bench_Lite")
@@ -175,27 +177,24 @@ print("A")
 # )
 # sample["instance_id"] = "test"
 print(sample)
-print("A")
 import time
 time.sleep(1)
 package_name = "package"
-print("B")
-tc = Tool_Calls(PATH=tool_calls_path, ENV_PATH=env_tool_calls_path, MAX_CHAR=50000)
-print("B")
+tc = Tool_Calls(PATH=tool_calls_path, ENV_PATH=env_tool_calls_path, MAX_CHAR=30000)
 time.sleep(1)
 tc.clear()
 
 # launch_web()
 os.environ["NO_PROXY"] = "*"
-print("C")
-message = fix_github_error(
-    sample=sample,
-    ct=ct,
-    max_steps=50,
-    tc=tc,
-    tree_filepath=f"/data/wyuan/workspace/agent_pro/tmp/{num}/logical_tree.json",
-    package_name=package_name,
-    verbose=False,
-    whether_recreate=False,
-    save_filepath=f"{ct.MAIN_DIR}/fix_issue.txt",
-)
+# message = fix_github_error(
+#     sample=sample,
+#     ct=ct,
+#     max_steps=500,
+#     tc=tc,
+#     tree_filepath=f"/data/yuanwen/workspace/tmp/{num}/logical_tree.json",
+#     package_name=package_name,
+#     verbose=False,
+#     whether_recreate=False,
+#     save_filepath=f"{ct.MAIN_DIR}/fix_issue.txt",
+# )
+print(llm.query("你好", verbose=False))

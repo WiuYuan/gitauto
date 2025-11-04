@@ -1,0 +1,5 @@
+websocket-client
+networkx
+matplotlib
+bs4
+tiktoken

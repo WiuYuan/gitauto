@@ -107,7 +107,16 @@ const TreeComponent = ({ data }) => {
     if (typeof data === 'string') {
       try {
         const parsed = JSON.parse(data)
-        return renderNode(parsed)
+        return (
+          <>
+            {data.task_id && (
+              <div style={{ color: '#ffa500', marginBottom: '10px', fontSize: '12px' }}>
+                Task ID: {data.task_id}
+              </div>
+            )}
+            {renderNode(parsed)}
+          </>
+        )
       } catch {
         return (
           <pre style={{ 
@@ -125,7 +134,16 @@ const TreeComponent = ({ data }) => {
       return data.map((n, i) => renderNode(n, 0, `root-${i}`))
     }
 
-    return renderNode(data)
+    return (
+      <>
+        {data.task_id && (
+          <div style={{ color: '#ffa500', marginBottom: '10px', fontSize: '12px' }}>
+            Task ID: {data.task_id}
+          </div>
+        )}
+        {renderNode(data)}
+      </>
+    )
   }
 
   return (

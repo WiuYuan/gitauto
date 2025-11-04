@@ -1,0 +1,12 @@
+### Handling of `send_message` Details after Analysis:
+
+#### Frontend and Backend Coordination
+- **Frontend Handling**:
+  - Uses WebSocket for real-time updates.
+  - Uses `level_delta` to manage message adjustments and categorize them.
+  - Implements callback mechanisms for uninterrupted server interaction.
+
+- **Backend Handling**:
+  - Manages multiple WebSocket client connections.
+  - Uses `LayerStack` and queues for organized message processing and broadcasts.
+  - Employs asynchronous techniques for sustained server communication.

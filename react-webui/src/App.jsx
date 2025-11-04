@@ -6,9 +6,10 @@ import WebSocketManager from './services/WebSocketManager'
 import './App.css'
 
 function App() {
-  const [treeData, setTreeData] = useState({})
+  const [taskTrees, setTaskTrees] = useState({}) // task_id -> treeData mapping
   const [connectionStatus, setConnectionStatus] = useState('disconnected')
   const [choiceData, setChoiceData] = useState(null)
+  const [activeTaskId, setActiveTaskId] = useState('default') // Currently active task
   const wsManagerRef = useRef(null)
 
   useEffect(() => {
@@ -18,11 +19,29 @@ function App() {
         console.log('Received message:', message)
         // Handle different message types
         if (message.type === 'tree_update') {
-          setTreeData(message.data)
+          // Update taskTrees state using task_id as key
+          const treeData = message.data
+          const taskId = treeData.task_id || 'default'
+          setTaskTrees(prev => ({
+            ...prev,
+            [taskId]: treeData
+          }))
+          // Set active task if not already set
+          if (activeTaskId === 'default' && taskId !== 'default') {
+            setActiveTaskId(taskId)
+          }
         } else if (message.type === 'status') {
           setConnectionStatus(message.data)
         } else if (message.type === 'choice_request') {
           setChoiceData(message.data)
+        }else if (message.type === 'clear_ack') {
+          console.log('🧹 Received clear_ack:', message.data)
+          // ✅ 清空任务树，只保留 default
+          setTaskTrees({ default: { category: 'root', items: [], children: [] } })
+          setActiveTaskId('default')
+  
+          // ✅ 可选：给出 UI 提示
+          // alert('✅ All trees cleared, only default remains.')
         }
       },
       onError: (error) => {
@@ -107,9 +126,27 @@ function App() {
         </div>
       )}
 
+      {/* Task Selection UI */}
+      {Object.keys(taskTrees).length > 0 && (
+        <div className="task-selector">
+          <label>Active Task: </label>
+          <select 
+            value={activeTaskId} 
+            onChange={(e) => setActiveTaskId(e.target.value)}
+            style={{ marginLeft: '10px', padding: '5px' }}
+          >
+            {Object.keys(taskTrees).map(taskId => (
+              <option key={taskId} value={taskId}>
+                {taskId === 'default' ? 'Default Task' : taskId}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
       <div className="tree-container">
-        {treeData && Object.keys(treeData).length > 0 ? (
-          <TreeComponent data={treeData} />
+        {taskTrees[activeTaskId] && Object.keys(taskTrees[activeTaskId]).length > 0 ? (
+          <TreeComponent data={taskTrees[activeTaskId]} />
         ) : (
           <p>No data yet...</p>
         )}

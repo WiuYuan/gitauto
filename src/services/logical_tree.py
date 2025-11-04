@@ -13,7 +13,7 @@ class LogicalTree:
             self,
             name: str,
             description: str = "",
-            back_num: int = 3,
+            back_num: int = -1,
             parent: Optional["LogicalTree.Node"] = None,
         ):
             self.name = name

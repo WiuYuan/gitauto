@@ -10,12 +10,13 @@ import copy
 import base64
 
 # from src.services.agents import Tool
-from src.services.summary_attention_dag import SummaryAttentionDAG
+from src.utils.summary_attention_dag import SummaryAttentionDAG
 import os
 import uuid
 from pathlib import Path
 from collections import defaultdict
 from src.services.external_client import ExternalClient
+import re
 
 
 os.environ["NO_PROXY"] = "*"
@@ -615,7 +616,7 @@ class LLM:
         check_start_prompt: str = None,
         human_check_before_calling: bool = False,
     ) -> str:
-        dag = SummaryAttentionDAG(m_layers=1, llm=self, parent_window=5, verbose=False)
+        dag = SummaryAttentionDAG(m_layers=1, llm=self, parent_window=5, verbose=verbose)
         # 记录每个step生成的输出
         all_texts = []
         func_dict = {func.__name__: func for func in tools} if tools else {}
@@ -663,7 +664,7 @@ class LLM:
             if len(previous_tool_calls_str) > tc.MAX_CHAR:
                 new_chunk = ""
                 backward_len = 0
-                for id in range(max_chunk_id - 1, 0, -1):
+                for id in range(max_chunk_id - 1, -1, -1):
                     backward_len += len(str(previous_tool_calls[id]))
                     new_chunk = str(previous_tool_calls[id]) + new_chunk
                     if previous_tool_calls[id].get("role") != "assistant":
@@ -672,16 +673,11 @@ class LLM:
                         break
                 forward_len = 0
                 for id in range(max_chunk_id, len(previous_tool_calls)):
+                    if forward_len > tc.MAX_CHAR / 2 and previous_tool_calls[id].get("role") == "assistant":
+                        max_chunk_id = id
+                        break
                     forward_len += len(str(previous_tool_calls[id]))
                     new_chunk = new_chunk + str(previous_tool_calls[id])
-                    if (
-                        id < len(previous_tool_calls) - 1
-                        and previous_tool_calls[id + 1].get("role") != "assistant"
-                    ):
-                        continue
-                    if forward_len > tc.MAX_CHAR / 2:
-                        max_chunk_id = id + 1
-                        break
                 if verbose:
                     log_webui(
                         "DAG",
@@ -825,6 +821,8 @@ class LLM:
             all_texts.append(out_text)
 
             # 工具调用部分保留
+            if len(tool_calls) == 0:
+                continue
             new_tool_calls = [
                 {"role": "assistant", "content": "", "tool_calls": tool_calls}
             ]
@@ -842,7 +840,8 @@ class LLM:
                             print("[ERROR] JSON 解析失败，原始 args 内容如下：")
                             print(repr(args))  # 用 repr 保留转义字符，防止打印不完整
                             print(f"[ERROR] 解析错误信息: {e}")
-                            raise e
+                            # raise e
+                            continue
                     if verbose:
                         formatted_args = self._format_arguments_for_display(
                             func_name, args
@@ -878,7 +877,15 @@ class LLM:
                         else:
                             result = "Human prevents this operation"
                     else:
-                        result = func_dict[func_name](**args)
+                        try:
+                            result = func_dict[func_name](**args)
+                        except Exception as e:
+                            import traceback
+                            tb = traceback.format_exc()
+                            result = (
+                                f"[Error] Function '{func_name}' failed with exception: {e.__class__.__name__}: {e}\n"
+                                f"Traceback:\n{tb}"
+                            )
                     if verbose:
                         self.ec.send_message(
                             {
@@ -928,8 +935,7 @@ class LLM:
                 tc.UpdataFunc()
 
             if stop_condition and stop_condition(tool_calls=tool_calls):
-                if verbose:
-                    print(f"\n=== Stopping early at chunk {step+1} ===\n")
+                print(f"\n=== Stopping early at chunk {step+1} ===\n")
                 break
 
         # 输出结果：把所有step的文本连接
@@ -942,6 +948,293 @@ class LLM:
         #     print(dag.export_json())
 
         return final_text
+    
+    def query_with_local_memory(
+        self,
+        prompt: Union[str, Callable[[], str]],
+        max_steps: int,
+        tc: Tool_Calls,
+        local_memory_folder: str,
+        memory_unit_number: int,
+        extra_guide_tool_call: List[Dict[str, Any]] = [],
+        tools: List[Callable] = None,
+        write_tools: List[Callable] = None,
+        verbose: bool = True,
+        stop_condition: Callable[..., bool] = None,
+        check_start_prompt: str = None,
+        human_check_before_calling: bool = False,
+        max_memory_chars: int = 1000,
+    ) -> str:
+        """
+        Multi-step LLM reasoning loop with external local memory files.
+
+        The agent can call tools including `update_num_list(new_list: list)`
+        to modify which memory files are loaded in the next iteration.
+        """
+        # 记录每个step生成的输出
+        all_texts = []
+        def update_num_list(remove_id: int, add_id: int) -> str:
+            """
+            Update the current num_list (memory file indices) by:
+            1. removing `remove_id` (if present),
+            2. adding `add_id` (if not already present).
+
+            Returns a status string for logging / LLM visibility.
+            """
+            nonlocal num_list  # keep using outer-scope num_list
+            before = list(num_list)
+            if remove_id not in num_list:
+                return f"[Error] remove_id {remove_id} not found in current num_list {before}. Operation cancelled."
+            if add_id in num_list:
+                return f"[Error] add_id {add_id} already exists in current num_list {before}. Operation cancelled."
+
+            # 1. remove
+            before_remove = list(num_list)
+            if remove_id in num_list:
+                num_list = [x for x in num_list if x != remove_id]
+                removed_msg = f"removed {remove_id}"
+            else:
+                removed_msg = f"{remove_id} not in list (no removal)"
+
+            # 2. add
+            before_add = list(num_list)
+            if add_id not in num_list:
+                num_list.append(add_id)
+                added_msg = f"added {add_id}"
+            else:
+                added_msg = f"{add_id} already exists (no add)"
+
+            return (
+                "num_list updated: "
+                f"before_remove={before_remove}, after_remove={before_add}, final={num_list}; "
+                f"{removed_msg}; {added_msg}"
+            )
+        
+        tools.append(update_num_list)
+        func_dict = {func.__name__: func for func in tools} if tools else {}
+        num_list = list(range(1, memory_unit_number + 1))
+
+        for step in range(max_steps):
+            print(f"\n[INFO] === Prompt step {step+1} ===\n")
+            if verbose:
+                self.ec.send_message(
+                    {
+                        "type": "info",
+                        "data": {
+                            "category": f"STEP {step + 1}",
+                            "content": f"=== Prompt step {step+1} ===",
+                            "level_delta": 1,
+                        },
+                    }
+                )
+
+            # 1️⃣ 从 num_list 读取 memory 内容
+            memory_contents = []
+            total_len = 0
+            for n in num_list:
+                path = Path("/data/yuanwen/workspace/gitauto/tmp/local_memory") / f"{n}"
+                if not path.exists():
+                    continue
+                text = path.read_text(encoding="utf-8").strip()
+                # if total_len + len(text) > max_memory_chars:
+                #     text = text[: max_memory_chars - total_len]
+                memory_contents.append(f"[Memory {n}]: {text}")
+                total_len += len(text)
+            memory_summary = "\n".join(memory_contents)
+
+            # 2️⃣ 构造 system prompt
+            prompt = "请你查看当我send_message之后, 前端和后端都是怎么处理的?"
+            memory_info = (
+                f"The agent has access to local memory files {num_list} "
+                f"in '{local_memory_folder}', 每个文件类似于{local_memory_folder}/1.\n\n"
+                f"Each file contains partial context (truncated to {max_memory_chars} chars):\n"
+                f"{memory_summary}\n\n"
+                "You may call available tools to perform actions.\n"
+                "To modify which memory files are loaded next, call the tool `update_num_list(new_list=[...])`.\n\n"
+                f"User prompt:\n{prompt() if callable(prompt) else prompt}\n\n"
+                "⚠️ Important instruction:\n"
+                "- The LLM itself has **no memory** between steps.\n"
+                "- All tool call results will **not be stored automatically**.\n"
+                "- If you want to preserve any information or computation results, you must explicitly **use a writing tool** (e.g. `func_write`, `func_append`, etc.) to save it into one of the local memory files.\n"
+                "- Otherwise, all tool results will be lost after this step.\n"
+                f"Therefore, if you generate any intermediate conclusions, code outputs, or summaries that you might need later, please write them into a numbered memory file under '{local_memory_folder}'."
+            )
+            memory_info = memory_info + f"\n\n\n**以下是以后完全不会保存的历史信息, 请你提取你认为有用, 使用func_write一系列函数的储存好**: \n{Tool_Calls.summarize_tool_calls(tc.get_value()+extra_guide_tool_call)}"
+            # 3️⃣ 执行 query
+            messages = [{"role": "user", "content": memory_info}]
+            if verbose:
+                # print("[LLM] Query")
+                self.ec.send_message(
+                    {
+                        "type": "info",
+                        "data": {
+                            "category": "LLM",
+                            "content": "Query with local memory",
+                            "level_delta": 1,
+                        },
+                    }
+                )
+                formatted_prompt = memory_info.replace("\n", "\n    ")
+                # print(f"  [SYSTEM PROMPT]\n    {formatted_system_prompt}")
+                # print(f"  [INPUT]\n    {formatted_prompt}")
+                self.ec.send_message(
+                    {
+                        "type": "info",
+                        "data": {
+                            "category": "INPUT",
+                            "content": formatted_prompt,
+                            "level_delta": 0,
+                        },
+                    }
+                )
+                # self.ec.send_message(
+                #     {
+                #         "type": "info",
+                #         "data": {
+                #             "category": "TOOL CALL",
+                #             "content": Tool_Calls.summarize_tool_calls(tc.get_value()),
+                #             "level_delta": 0,
+                #         },
+                #     }
+                # )
+            out_text, tool_calls = self.query_messages_with_tools(
+                messages + tc.get_value() + extra_guide_tool_call, tools=tools, verbose=verbose
+            )
+            # if step%2 == 0:
+            #     print("A")
+            #     out_text, tool_calls = self.query_messages_with_tools(
+            #         messages, tools=tools, verbose=verbose
+            #     )
+            # else:
+            #     print("B")
+            #     out_text, tool_calls = self.query_messages_with_tools(
+            #         messages, tools=write_tools, verbose=verbose
+            #     )
+            tc.clear()
+            if verbose:
+                self.ec.send_message(
+                    {
+                        "type": "info",
+                        "data": {
+                            "category": "",
+                            "content": "",
+                            "level_delta": -1,
+                        },
+                    }
+                )
+
+            all_texts.append(out_text)
+
+            # 4️⃣ 工具调用逻辑
+            if len(tool_calls) == 0:
+                if verbose:
+                    self.ec.send_message(
+                        {"type": "info", "data": {"category": "", "content": "", "level_delta": -1}}
+                    )
+                continue
+            new_tool_calls = [{"role": "assistant", "content": "", "tool_calls": tool_calls}]
+            for call in tool_calls:
+                if self.format == "ollama":
+                    call = call["function"]
+                func_name = call["name"]
+                args = call["function"]["arguments"]
+
+                if func_name in func_dict:
+                    if isinstance(args, str):
+                        try:
+                            args = json.loads(args)
+                        except json.JSONDecodeError as e:
+                            print("[ERROR] JSON decode failed:", e)
+                            print("Raw args:", args)
+                            continue
+                    if verbose:
+                        formatted_args = self._format_arguments_for_display(func_name, args)
+                        formatted_args = formatted_args.replace("\n", "\n    ")
+                        self.ec.send_message(
+                            {
+                                "type": "info",
+                                "data": {
+                                    "category": "CALL",
+                                    "content": f"Calling '{func_name}' with arguments:\n{formatted_args}",
+                                    "level_delta": 1,
+                                },
+                            }
+                        )
+                        
+                    if human_check_before_calling and func_name not in [
+                        "func_ls",
+                        "func_cat",
+                        "help_add_child",
+                        "help_return_to_parent",
+                        "add_child",
+                        "return_to_parent",
+                    ]:
+                        human_response = self.ec.get_choice_response(
+                            question=f"Whether call'{func_name}' with arguments:\n{formatted_args}",
+                            options=["Yes", "No"],
+                        )
+                        if human_response == "Yes":
+                            result = func_dict[func_name](**args)
+                        else:
+                            result = "Human prevents this operation"
+                    else:
+                        try:
+                            result = func_dict[func_name](**args)
+                        except Exception as e:
+                            import traceback
+                            tb = traceback.format_exc()
+                            result = (
+                                f"[Error] Function '{func_name}' failed with exception: {e.__class__.__name__}: {e}\n"
+                                f"Traceback:\n{tb}"
+                            )
+                        
+                    if verbose:
+                        self.ec.send_message(
+                            {
+                                "type": "info",
+                                "data": {
+                                    "category": "RESULT",
+                                    "content": result,
+                                    "level_delta": 0,
+                                },
+                            }
+                        )
+                        self.ec.send_message(
+                            {
+                                "type": "info",
+                                "data": {
+                                    "category": "",
+                                    "content": "",
+                                    "level_delta": -1,
+                                },
+                            }
+                        )
+
+                    new_tool_calls.append(
+                        {
+                            "role": "tool",
+                            "name": func_name,
+                            "tool_call_id": call.get("id", ""),
+                            "content": str(result),
+                        }
+                    )
+
+            tc.extend(new_tool_calls)
+            if tc.UpdataFunc is not None:
+                tc.UpdataFunc()
+
+            if stop_condition and stop_condition(tool_calls=tool_calls):
+                if verbose:
+                    print(f"\n=== Stopping early at step {step+1} ===\n")
+                break
+
+            if verbose:
+                self.ec.send_message(
+                    {"type": "info", "data": {"category": "", "content": "", "level_delta": -1}}
+                )
+
+        final_text = "\n".join(all_texts)
+        return final_text, num_list
 
 
 def save_messages(messages: str, filepath: str):

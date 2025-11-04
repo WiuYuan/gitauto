@@ -25,6 +25,7 @@ class ExternalClient:
         port: Optional[int] = None,
         auto_start: bool = True,
         on_message: Optional[Callable[[Dict[str, Any]], None]] = None,
+        task_id: Optional[str] = None,
     ):
         self.port = port
         self.ws_url = f"ws://127.0.0.1:{self.port}"
@@ -34,6 +35,10 @@ class ExternalClient:
         self._ws = None
         # self._on_message = on_message or (lambda msg: print(f"📩 {msg}"))
         self._on_message = on_message or (lambda msg: None)
+        if task_id is None:
+            self.task_id = str(uuid.uuid4())
+        else:
+            self.task_id = task_id
 
         print(f"🔗 ExternalClient initialized — {self.ws_url}")
 
@@ -145,6 +150,7 @@ class ExternalClient:
             if delta == 0 and len(category) != 0:
                 enter_msg = {
                     "type": "info",
+                    "task_id": self.task_id,
                     "data": {
                         **data,
                         "level_delta": +1,
@@ -153,6 +159,7 @@ class ExternalClient:
                 self._send_message(enter_msg)
                 exit_msg = {
                     "type": "info",
+                    "task_id": self.task_id,
                     "data": {
                         **data,
                         "level_delta": -1,
@@ -161,6 +168,7 @@ class ExternalClient:
                 }
                 self._send_message(exit_msg)
                 return
+        message["task_id"] = self.task_id
         self._send_message(message=message)
 
     def _send_message(self, message: Dict[str, Any]):
@@ -178,6 +186,7 @@ class ExternalClient:
         cid = str(uuid.uuid4())
         message = {
             "type": "choice_request",
+            "task_id": self.task_id,
             "data": {"choiceId": cid, "question": question, "options": options},
         }
         self.send_message(message=message)
@@ -213,7 +222,7 @@ class ExternalClient:
 
         # 3️⃣ 发送请求
         try:
-            payload = {"type": "queue_request", "data": {}}
+            payload = {"type": "queue_request", "task_id": self.task_id, "data": {}}
             self._ws.send(json.dumps(payload))
             # print("📤 Sent queue_request to server")
         except Exception as e:
@@ -261,7 +270,7 @@ class ExternalClient:
         return None
 
     def remove_message(self, message: Dict[str, Any]):
-        self.send_message({"type": "queue_remove", "data": {"target": message}})
+        self.send_message({"type": "queue_remove", "task_id": self.task_id, "data": {"target": message}})
         return
 
     def get_all_guidance(self, timeout: Optional[float] = None) -> str:

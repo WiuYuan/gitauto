@@ -8,8 +8,6 @@ import uuid
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional
 import websockets
-import websocket
-from websocket import WebSocketApp
 import os
 
 
@@ -98,7 +96,7 @@ class ExternalServer:
         self._incoming_queue = queue.Queue()
         self._request_queue = queue.Queue()
         self._send_queue = queue.Queue()
-        self._stack = LayerStack()
+        self._stacks = {}  # task_id -> LayerStack mapping
         self._sender_thread_started = False
         self.log_filepath = log_filepath
         if log_filepath is not None:
@@ -108,8 +106,6 @@ class ExternalServer:
             with open(self.log_filepath, "w", encoding="utf-8") as f:
                 pass  # 清空文件
 
-        with open(".webui_port", "w") as f:
-            f.write(str(self.port))
         print(f"🌐 ExternalServer initialized on ws://127.0.0.1:{self.port}")
 
     @staticmethod
@@ -141,8 +137,14 @@ class ExternalServer:
 
                     if msg_type == "info":
                         payload = data.get("data", {})
-                        self._stack.apply(payload)
-                        self._request_queue.put(self._stack.to_dict())
+                        task_id = data.get("task_id", "default")
+                        # Get or create LayerStack for this task_id
+                        if task_id not in self._stacks:
+                            self._stacks[task_id] = LayerStack()
+                        self._stacks[task_id].apply(payload)
+                        tree_data = self._stacks[task_id].to_dict()
+                        tree_data["task_id"] = task_id
+                        self._request_queue.put(tree_data)
 
                     elif msg_type == "choice_request":
                         await self._broadcast(data)
@@ -187,10 +189,39 @@ class ExternalServer:
                         )
 
                     elif msg_type == "clear_tree":
-                        self._stack = LayerStack()
-                        self._request_queue.queue.clear()
+                        # 🧹 新逻辑：清空所有 LayerStack，只保留 default 的 root
+                        print("🧹 Received clear_tree — resetting all tasks.")
+                        self._stacks = {"default": LayerStack()}  # 重置为仅一个 default
+
+                        # 清空 request_queue
+                        temp_queue = queue.Queue()
+                        try:
+                            while True:
+                                _ = self._request_queue.get_nowait()
+                                # 丢弃全部旧内容
+                                continue
+                        except queue.Empty:
+                            pass
+
+                        # 重新推入一个默认空 tree
+                        tree_data = self._stacks["default"].to_dict()
+                        tree_data["task_id"] = "default"
+                        self._request_queue.put(tree_data)
+
+                        # ✅ 广播到所有前端，告知树被重置
                         await self._broadcast(
-                            {"type": "tree_update", "data": self._stack.to_dict()}
+                            {
+                                "type": "tree_update",
+                                "data": tree_data,
+                            }
+                        )
+
+                        # 也可以广播一个确认消息（可选）
+                        await self._broadcast(
+                            {
+                                "type": "clear_ack",
+                                "data": {"success": True, "remaining_tasks": list(self._stacks.keys())},
+                            }
                         )
 
                 except Exception as e:
@@ -236,44 +267,6 @@ class ExternalServer:
     def launch_server(self):
         asyncio.run(self._server_main())
 
-    def _sender_loop(self):
-        ws_url = f"ws://127.0.0.1:{self.port}"
-
-        def _connect():
-            ws = WebSocketApp(ws_url)
-            threading.Thread(target=ws.run_forever, daemon=True).start()
-            time.sleep(0.3)
-            return ws
-
-        ws = _connect()
-        while True:
-            msg = self._send_queue.get()
-            if msg is None:
-                break
-            try:
-                if not ws.sock or not ws.sock.connected:
-                    ws = _connect()
-                ws.send(json.dumps(msg))
-            except Exception as e:
-                print(f"[ERROR] Send failed: {e}")
-                time.sleep(0.5)
-
-    def send_messages(self, message: dict):
-        if not self._sender_thread_started:
-            threading.Thread(target=self._sender_loop, daemon=True).start()
-            self._sender_thread_started = True
-        self._send_queue.put(message)
-
-    def send_choice(self, question: str, options: List[str]) -> str:
-        cid = str(uuid.uuid4())
-        self.send_messages(
-            {
-                "type": "choice_request",
-                "data": {"choiceId": cid, "question": question, "options": options},
-            }
-        )
-        return cid
-
     def remove_message(self, target: Dict[str, Any]) -> bool:
         temp = []
         removed = False
@@ -289,3 +282,9 @@ class ExternalServer:
         for item in temp:
             self._incoming_queue.put(item)
         return removed
+
+    def get_stack_for_task(self, task_id: str) -> LayerStack:
+        """Get LayerStack for a specific task_id, creating if not exists"""
+        if task_id not in self._stacks:
+            self._stacks[task_id] = LayerStack()
+        return self._stacks[task_id]

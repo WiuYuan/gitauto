@@ -13,8 +13,11 @@ from src.services.pubmed_scraper import (
     extract_main_article_body,
 )
 from src.services.agents import Tool_Calls, get_func_tool_call
-import tiktoken
 import ast
+from youtube_transcript_api import YouTubeTranscriptApi
+import requests, time, random
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 
 class custom_tools:
@@ -22,6 +25,7 @@ class custom_tools:
         self,
         HOST_DIR: str = "",
         HOST_DATA_DIR: str = "",
+        WRITE_DIR: str = "",
         MATLAB_PATH: str = "matlab",
         ENV_NAME: str = "",
         LOCAL_TMP_PATH: str = "",
@@ -36,6 +40,7 @@ class custom_tools:
     ):
         self.HOST_DIR = HOST_DIR
         self.HOST_DATA_DIR = HOST_DATA_DIR
+        self.WRITE_DIR = WRITE_DIR
         self.MAIN_DIR = MAIN_DIR
         self.MAIN_DATA_DIR = MAIN_DATA_DIR
         self.PYTHON_PATH = PYTHON_PATH
@@ -300,6 +305,13 @@ class custom_tools:
             input: 'agent1/main.sh', 'echo hello'
             output: 'Written to agent1/main.sh'
         """
+        if len(self.WRITE_DIR) > 0:
+            abs_target = os.path.abspath(os.path.join(self.MAIN_DIR, filepath))
+            abs_write_dir = os.path.abspath(self.WRITE_DIR)
+
+            # ✅ 检查是否在允许目录内
+            if not abs_target.startswith(abs_write_dir + os.sep):
+                return f"[Error] Unauthorized write attempt to {abs_target}. Allowed directory: {abs_write_dir}"
         if len(self.ENV_NAME) == 0:
             local_filepath = os.path.join(self.MAIN_DIR, filepath)
             self._func_write(filepath=local_filepath, text=text)
@@ -713,6 +725,44 @@ class custom_tools:
         )
         print("[FUNC] Complete func_think")
         return result
+    
+    def func_reflect(self, text: str) -> str:
+        """
+        Lightweight internal reflection module.
+
+        This function performs **pure reasoning** on a single, clearly described problem,
+        without invoking any external tools or task management. It acts as a minimalistic
+        "inner monologue" function that helps the model articulate its thoughts clearly.
+
+        Usage:
+            - Input a detailed problem description or question via `text`.
+            - The function returns a concise, coherent reasoning output (not a direct answer).
+
+        ⚠️ Important constraints:
+            - Only one problem per call — do NOT include multiple unrelated tasks.
+            - Must not attempt to execute code or call tools.
+            - Designed purely for controlled, local reasoning.
+
+        Args:
+            text (str): A detailed description of the problem to think about.
+
+        Returns:
+            str: The model's reflection text, summarizing reasoning or insight.
+        """
+        print("[FUNC] Start func_reflect for pure reasoning")
+
+        # 生成指令提示词
+        self.llm.system_prompt=""
+        reflection_prompt = get_prompt("func_reflect_prompt.txt").format(text=text)
+
+        # 不调用任何工具，只进行单步思考
+        result = self.llm.query(
+            prompt=reflection_prompt,
+            verbose=self.verbose,
+        )
+
+        print("[FUNC] Complete func_reflect")
+        return result
 
     def add_child(self, name: str = "", description: str = "") -> str:
         """
@@ -777,6 +827,101 @@ class custom_tools:
         print(f"\n[FUNC] Complete extracting factual information\n")
         return filter_text
 
+    def func_youtube_search_with_transcript(
+        self,
+        query: str,
+        max_results: int = 5,
+        order: str = "date",
+        published_after: str = None,
+        include_transcript: bool = True,
+        max_transcript_segments: int = 20,
+    ) -> str:
+        """
+        Search for YouTube videos and safely fetch partial transcripts.
+        This version never crashes — all network, SSL, or API errors are caught and explained.
+        """
+
+        api_key = "AIzaSyCrA-ISpOpkZ_hdvrBNeEedEdxQ7HH09hM"
+        url = "https://www.googleapis.com/youtube/v3/search"
+        params = {
+            "key": api_key,
+            "part": "snippet",
+            "type": "video",
+            "q": query,
+            "maxResults": max_results,
+            "order": order,
+        }
+        if published_after:
+            params["publishedAfter"] = published_after
+
+        # ---------- 安全 requests 会话 ----------
+        session = requests.Session()
+        retry = Retry(connect=3, read=3, backoff_factor=1)
+        adapter = HTTPAdapter(max_retries=retry)
+        session.mount("https://", adapter)
+        session.mount("http://", adapter)
+
+        try:
+            response = session.get(
+                url,
+                params=params,
+                timeout=10,
+                verify=True,
+            )
+            response.raise_for_status()
+            data = response.json()
+        except requests.exceptions.SSLError as e:
+            # SSL 问题，尝试关闭验证
+            try:
+                response = session.get(
+                    url,
+                    params=params,
+                    timeout=10,
+                    verify=False,  # 忽略证书验证
+                )
+                data = response.json()
+            except Exception as e2:
+                return f"⚠️ Network or SSL error (verify=False): {e2}"
+        except Exception as e:
+            return f"⚠️ Network or API error: {e}"
+
+        # ---------- 解析结果 ----------
+        results = []
+        for item in data.get("items", []):
+            video_id = item["id"]["videoId"]
+            snippet = item["snippet"]
+            title = snippet.get("title", "[No title]")
+            desc = snippet.get("description", "[No description]")
+            channel = snippet.get("channelTitle", "[Unknown channel]")
+            published = snippet.get("publishedAt", "[Unknown date]")
+            video_url = f"https://www.youtube.com/watch?v={video_id}"
+
+            transcript_text = ""
+            if include_transcript:
+                try:
+                    api = YouTubeTranscriptApi()
+                    fetched = api.fetch(video_id, languages=['en', 'zh-Hans', 'zh'])
+                    raw = fetched.to_raw_data()
+                    partial = raw[:max_transcript_segments]
+                    transcript_text = " ".join(seg.get("text", "") for seg in partial).strip()
+                except Exception as e:
+                    transcript_text = f"[No transcript available: {e}]"
+
+                # 防止请求过快被封 IP
+                time.sleep(random.uniform(1.0, 2.5))
+
+            results.append(
+                f"🎬 **{title}** ({channel}, {published})\n"
+                f"🔗 {video_url}\n"
+                f"📝 Description: {desc}\n"
+                f"📜 Transcript (partial): {transcript_text[:1000]}...\n"
+                "----------------------------------------\n"
+            )
+
+        if not results:
+            return "No results found."
+
+        return "\n".join(results)
 
 def chunk_text_by_chars(text: str, max_chars: int = 500, overlap: int = 50):
     """

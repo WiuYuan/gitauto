@@ -1,0 +1,11 @@
+### Message Processing Overview:
+
+**Frontend Handling:**
+1. **Real-time Communication:** It uses WebSocket for real-time message transmission to/from the server.
+2. **Message Modification:** Messages are processed by checking if `level_delta` is zero; if so, it modifies it and categorizes it accordingly.
+3. **Continuous Interaction:** Implements callback mechanisms that allow for continuous interaction with the server.
+
+**Backend Handling:**
+1. **Multiple Client Management:** Capably manages multiple clients using WebSocket connections simultaneously.
+2. **Organized Processing:** Utilizes a `LayerStack` to organize the messages, directing the flow through a queue system that handles broadcasting updates efficiently.
+3. **Ongoing Communication:** Successfully keeps enduring server communication by employing asynchronous operations, ensuring consistent data transfer.

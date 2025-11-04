@@ -1,0 +1,11 @@
+### Summary for Send Message Processing:
+
+#### Frontend:
+- Utilizes WebSocket for real-time communication.
+- Processes messages by adding level_delta (if zero) and category.
+- Employs callback-based methods for continuous server interaction.
+
+#### Backend:
+- Manages multiple clients through WebSocket connections.
+- Processes messages using LayerStack and a queue system for structured handling and broadcast updates.
+- Maintains persistent connections with asynchronous methods.

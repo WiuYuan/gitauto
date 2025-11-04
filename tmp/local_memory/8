@@ -1,0 +1,11 @@
+### Handling of `send_message` Summary:
+
+#### Frontend Handling:
+- Uses WebSocket for real-time communication.
+- Processes messages by checking `level_delta`. If zero, modifies and categorizes messages.
+- Implements callback mechanisms for continuous interaction with the server.
+
+#### Backend Handling:
+- Manages multiple clients using WebSocket connections.
+- Employs `LayerStack` and a queue system for efficient organized message processing and broadcasts.
+- Utilizes asynchronous operations for enduring communication with the server.
