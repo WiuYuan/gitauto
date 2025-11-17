@@ -8,6 +8,7 @@ from src.services.external_client import ExternalClient
 import json
 import uuid
 import base64
+import os
 
 
 def generate_prompt_for_solve_goal_list(
@@ -42,12 +43,12 @@ def solve_goal_list(
     ct: custom_tools,
     max_steps: int,
     tc: Tool_Calls,
-    tree_filepath: str,
     verbose: bool,
     human_decision: bool = False,
     tools: Union[List[Callable], None] = None,
     human_check_before_calling: bool = False,
 ):
+    tree_filepath = os.path.join(tc.LOG_DIR, "logical_tree.json")
 
     tree = LogicalTree("Pseudo Root", "Pseudo Root Description")
 
@@ -477,7 +478,6 @@ def solve_goal_list(
 
         guidance = get_prompt("tools_emphasize_prompt.txt").format(
             tool_descriptions=summarize_tools(tools).replace("\n", "\t\n"),
-            tool_calls_path=tc.ENV_PATH,
         )
         extra_guide_tool_call = get_func_tool_call(
             func_name="func_guide", result=guidance, guidance="Will Return Guidance"
@@ -517,12 +517,12 @@ def solve_goal_list_test(
     ct: custom_tools,
     max_steps: int,
     tc: Tool_Calls,
-    tree_filepath: str,
     verbose: bool,
     human_decision: bool = False,
     tools: Union[List[Callable], None] = None,
     human_check_before_calling: bool = False,
 ):
+    tree_filepath = os.path.join(tc.LOG_DIR, "logical_tree.json")
 
     tree = LogicalTree("Pseudo Root", "Pseudo Root Description")
 
@@ -953,7 +953,6 @@ def solve_goal_list_test(
 
         # guidance = get_prompt("tools_emphasize_prompt.txt").format(
         #     tool_descriptions=summarize_tools(tools).replace("\n", "\t\n"),
-        #     tool_calls_path=tc.ENV_PATH,
         # )
         # extra_guide_tool_call = get_func_tool_call(
         #     func_name="func_guide", result=guidance, guidance="Will Return Guidance"
@@ -1038,7 +1037,114 @@ def fix_github_error(
     ct: custom_tools,
     max_steps: int,
     tc: Tool_Calls,
-    tree_filepath: str,
+    package_name: str,
+    verbose: bool,
+    whether_recreate: bool,
+    save_filepath: str,
+):
+    if whether_recreate:
+        if verbose:
+            ct.llm.ec.send_message(
+                {
+                    "type": "info",
+                    "data": {
+                        "category": "ENVIRONMENT",
+                        "content": "Creating Docker environment...",
+                        "level_delta": 0,
+                    },
+                }
+            )
+            # print("\n[INFO] Creating Docker environment...\n")
+
+        ct.func_create_env()
+    issue = get_github_issue(sample)
+    github_url = issue["repo_clone_url"]
+    base_commit = issue["base_commit"]
+    if verbose:
+        ct.llm.ec.send_message(
+            {
+                "type": "info",
+                "content": {
+                    "category": "CLONE GITHUB",
+                    "content": "Cloning GitHub repository...",
+                    "level_delta": 0,
+                },
+            }
+        )
+    print("\n[INFO] Cloning GitHub repository...\n")
+
+    ct.func_cmd(f"rm -rf ./*")
+    print(github_url)
+    result = ct.func_git_clone(github_url, package_name)
+
+    new_tool_calls = get_func_tool_call(
+        func_name="func_cmd",
+        result=result,
+        command=f"git clone {github_url} {package_name}",
+    )
+    tc.extend(new_tool_calls)
+    if base_commit is not None:
+        command = f"cd {package_name} && git checkout {base_commit} && pip install -e ."
+        result = ct.func_cmd(command)
+
+        new_tool_calls = get_func_tool_call(
+            func_name="func_cmd",
+            result=result,
+            command=command,
+        )
+        tc.extend(new_tool_calls)
+    tools = [
+        ct.func_cat,
+        # ct.func_cat_with_llm,
+        ct.func_write,
+        ct.func_modify,
+        ct.func_insert,
+        ct.func_append,
+        ct.func_prepend,
+        ct.func_python,
+        ct.func_cmd,
+        # ct.func_matlab,
+        # ct.func_fetch_info_from_pmc_with_llm,
+        # ct.func_human,
+        ct.func_reflect,
+        ct.func_guide,
+        # ct.func_think,
+        ct.add_child,
+        ct.return_to_parent,
+    ]
+    goal_list = [
+        (
+            "fix github issue",
+            get_prompt("github_issue_fix_prompt.txt").format(
+                filepath=save_filepath, problem=issue["problem"].replace("\n", "\n\t"), base_commit=base_commit
+            ),
+        )
+        # (
+        #     "improve existing github patch",
+        #     get_prompt("github_patch_improvement_prompt.txt").format(
+        #         filepath=save_filepath,
+        #         problem=issue["problem"].replace("\n", "\n\t"),
+        #         base_commit=base_commit,
+        #     ),
+        # )
+    ]
+
+    return solve_goal_list(
+        goal_list=goal_list,
+        ct=ct,
+        max_steps=max_steps,
+        tc=tc,
+        verbose=verbose,
+        human_decision=False,
+        tools=tools,
+    )
+    
+
+def radiogenomics_agent(
+    sample: dict,
+    ct: custom_tools,
+    max_steps: int,
+    tc: Tool_Calls,
     package_name: str,
     verbose: bool,
     whether_recreate: bool,
@@ -1118,9 +1224,17 @@ def fix_github_error(
         (
             "fix github issue",
             get_prompt("github_issue_fix_prompt.txt").format(
-                filepath=save_filepath, problem=issue["problem"].replace("\n", "\t\n")
+                filepath=save_filepath, problem=issue["problem"].replace("\n", "\n\t"), base_commit=base_commit
             ),
-        )
+        ),
+        (
+        "improve existing github patch",
+        get_prompt("github_patch_improvement_prompt.txt").format(
+            filepath=save_filepath,
+            problem=issue["problem"].replace("\n", "\n\t"),
+            base_commit=base_commit,
+        ),
+    )
     ]
 
     return solve_goal_list(
@@ -1128,7 +1242,6 @@ def fix_github_error(
         ct=ct,
         max_steps=max_steps,
         tc=tc,
-        tree_filepath=tree_filepath,
         verbose=verbose,
         human_decision=False,
         tools=tools,

@@ -73,3 +73,4 @@ echo -e "${CYAN}📜 Logs: tail -f /tmp/webui_backend.log /tmp/webui_frontend.lo
 
 # 不阻塞：等待后台进程退出（Ctrl+C 可退出并清理）
 wait
+# VITE_WS_PORT=17860 npm run dev -- --host 0.0.0.0 --port 4000

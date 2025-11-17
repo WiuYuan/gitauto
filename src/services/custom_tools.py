@@ -35,6 +35,7 @@ class custom_tools:
         MAIN_DATA_DIR: str = "/data",
         PYTHON_PATH: str = "python",
         REMOTE_TMP_PATH: str = "/tmp",
+        CHUNK_SIZE: int = 5000,
         llm: LLM = LLM(),
         verbose: bool = True,
     ):
@@ -50,6 +51,7 @@ class custom_tools:
         self.REMOTE_TMP_PATH = REMOTE_TMP_PATH
         self.BASE_ENV = BASE_ENV
         self.PMC_URL = PMC_URL
+        self.CHUNK_SIZE=CHUNK_SIZE
         self.llm = llm
         self.verbose = verbose
 
@@ -119,7 +121,7 @@ class custom_tools:
 
         return output
 
-    def func_cmd(self, command: str, return_chunk_indices: list[int] = [1, -1]) -> str:
+    def func_cmd(self, command: str, return_chunk_indices: list[int] = [1, -1], max_time: float = 60.0) -> str:
         """
         This function writes the command to a .sh file and then executes it using bash, capture stdout/stderr, and optionally return selected chunks of stdout.
 
@@ -127,6 +129,7 @@ class custom_tools:
             command (str): The command to run.
             return_chunk_indices (list[int]): 1-based indices of chunks to return.
                 Negative indices are allowed (like Python lists). Default is [1, -1] (first and last chunk).
+            max_time (float): Maximum execution time (seconds). Default 60.0 seconds.
 
         Returns:
             str: Selected stdout chunks with metadata and simplified error message if failed.
@@ -142,18 +145,40 @@ class custom_tools:
         return_chunk_indices = [int(x) for x in return_chunk_indices]
 
         # 固定 chunk 设置
-        CHUNK_SIZE = 5000
-        CHUNK_OVERLAP = 500
+        CHUNK_SIZE = self.CHUNK_SIZE
+        CHUNK_OVERLAP = int(CHUNK_SIZE / 10)
 
         # 将命令写入临时文件并执行
         if len(self.ENV_NAME) != 0:
             container_path = self._write_to_remote_tmp("_func_cmd", command)
             run_cmd = f"docker exec {self.ENV_NAME} bash -c 'cd {self.MAIN_DIR} && bash {container_path}'"
-            result = subprocess.run(run_cmd, shell=True, capture_output=True, env=os.environ)
         else:
             local_path = self._write_to_local_tmp("_func_cmd", command)
             run_cmd = f"bash -c 'cd {self.MAIN_DIR} && bash {local_path}'"
-            result = subprocess.run(run_cmd, shell=True, capture_output=True, env=os.environ)
+        try:
+            if max_time is None:
+                # No timeout → do not pass the timeout parameter at all
+                result = subprocess.run(
+                    run_cmd,
+                    shell=True,
+                    capture_output=True,
+                    env=os.environ,
+                )
+            else:
+                result = subprocess.run(
+                    run_cmd,
+                    shell=True,
+                    capture_output=True,
+                    env=os.environ,
+                    timeout=max_time,
+                )
+        except subprocess.TimeoutExpired as e:
+            result = subprocess.CompletedProcess(
+                args=e.cmd,
+                returncode=-1,
+                stdout=e.output or b"",
+                stderr=(e.stderr or b"") + f"\n[Process timed out after {max_time}s]".encode(),
+            )
         try:
             output = result.stdout.decode("utf-8")
             output = clean_training_logs(output)
@@ -184,6 +209,15 @@ class custom_tools:
             error = result.stderr.decode("utf-8")
         except UnicodeDecodeError:
             error = "Error: STDERR output is not UTF-8 decodable."
+            
+        MAX_STDERR_CHUNK = int(self.CHUNK_SIZE / 2)
+            
+        if len(error) > MAX_STDERR_CHUNK * 2:
+            head = error[:MAX_STDERR_CHUNK]
+            tail = error[-MAX_STDERR_CHUNK:]
+            error = (
+                f"{head}\n\n...[truncated middle {len(error) - 2*MAX_STDERR_CHUNK} chars]...\n\n{tail}"
+            )
 
         status = "Run the Command Successfully"
         if result.returncode != 0:
@@ -347,7 +381,7 @@ class custom_tools:
         abs_workdir = os.path.join(self.MAIN_DIR, workdir)
         full_path = os.path.join(self.MAIN_DIR, filepath)
         command = f"cd {abs_workdir} && {self.PYTHON_PATH} {full_path}"
-        return clean_training_logs(self.func_cmd(command))
+        return self.func_cmd(command)
 
     def func_pip_install(self, package: str):
         """
@@ -521,7 +555,15 @@ class custom_tools:
         return self.func_local_cmd(f"docker rm -f {self.ENV_NAME} || true")
 
     def func_git_clone(self, url: str, package_name: str):
-        return self.func_cmd(f"cd {self.MAIN_DIR} && git clone {url} {package_name}")
+        cmd = (
+            f"cd {self.MAIN_DIR} && "
+            f"until git clone {url} {package_name}; do "
+            f"echo '⚠️  Git clone failed, retrying in 10s ...'; "
+            f"sleep 10; "
+            f"done"
+        )
+        return self.func_cmd(cmd, max_time=None)
+        # return self.func_cmd(f"cd {self.MAIN_DIR} && git clone {url} {package_name}")
 
     def func_git_checkout(self, package_name: str, commit: str):
         repo_dir = os.path.join(self.MAIN_DIR, package_name)
@@ -753,16 +795,24 @@ class custom_tools:
 
         # 生成指令提示词
         self.llm.system_prompt=""
-        reflection_prompt = get_prompt("func_reflect_prompt.txt").format(text=text)
+        reflection_prompt1 = get_prompt("reflect/func_reflect_simplify_prompt.txt").format(text=text)
 
         # 不调用任何工具，只进行单步思考
-        result = self.llm.query(
-            prompt=reflection_prompt,
+        result1 = self.llm.query(
+            prompt=reflection_prompt1,
+            verbose=self.verbose,
+        )
+        
+        reflection_prompt2 = get_prompt("reflect/func_reflect_improve_prompt.txt").format(text=text)
+
+        # 不调用任何工具，只进行单步思考
+        result2 = self.llm.query(
+            prompt=reflection_prompt2,
             verbose=self.verbose,
         )
 
         print("[FUNC] Complete func_reflect")
-        return result
+        return result1+"\n"+result2
 
     def add_child(self, name: str = "", description: str = "") -> str:
         """

@@ -17,22 +17,38 @@ import argparse
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--num", type=int, default=0, help="输入数字参数")
+parser.add_argument("--verbose", type=bool, default=False, help="verbose")
 args = parser.parse_args()
 
 num = args.num
-print("num =", num)
+verbose = args.verbose
+print("num =", num, ",verbose =", verbose)
 
 # llm = LLM(model_name="qwen3:8b")
 with open(".webui_port", "r", encoding="utf-8") as f:
     port = int(f.read())
-# ec = ExternalClient(port=port)
+if verbose:
+    ec = ExternalClient(port=port)
+else:
+    ec = None
 llm = LLM(
     model_name="deepseek-chat",
     llm_url="https://api.deepseek.com/chat/completions",
-    api_key="sk-10937ce390644e3faf0016669a46a005",
+    api_key="sk-8969134148cb48c88377e5eefc6322c0",
     format="openai",
-    # ec=ec,
+    # proxies={
+    #     "http": "socks5h://127.0.0.1:1081",
+    #     "https": "socks5h://127.0.0.1:1081",
+    # },
+    ec=ec,
 )
+# llm = LLM(
+#     model_name="/data/yuanwen/models/qwen3-32b",
+#     llm_url="http://localhost:8000/v1/chat/completions",
+#     api_key="",
+#     format="openai",
+#     ec=ec
+# )
 # llm = LLM(
 #     model_name="gpt-5-2025-08-07",
 #     llm_url="https://api.aimlapi.com/v1/chat/completions",
@@ -55,16 +71,16 @@ ct = custom_tools(
     PYTHON_PATH="python",
     # MATLAB_PATH="/Applications/MATLAB_R2023b.app/bin/matlab",
     LOCAL_TMP_PATH=f"/data/yuanwen/workspace/tmp/{num}",
+    CHUNK_SIZE=5000,
     llm=llm,
-    verbose=False,
+    verbose=verbose,
 )
 os.makedirs(ct.MAIN_DIR, exist_ok=True)
 from src.services.llm import load_messages, save_messages
 
-tool_calls_path = (
-    f"/data/yuanwen/workspace/tmp/{num}/tool_calls_path.json"
+LOG_DIR = (
+    f"/data/yuanwen/workspace/tmp/{num}"
 )
-env_tool_calls_path = "/workspace/tool_calls_path.json"
 
 import requests
 from bs4 import BeautifulSoup
@@ -180,21 +196,33 @@ print(sample)
 import time
 time.sleep(1)
 package_name = "package"
-tc = Tool_Calls(PATH=tool_calls_path, ENV_PATH=env_tool_calls_path, MAX_CHAR=30000)
+tc = Tool_Calls(LOG_DIR=LOG_DIR, MAX_CHAR=40000)
 time.sleep(1)
 tc.clear()
 
 # launch_web()
 os.environ["NO_PROXY"] = "*"
-# message = fix_github_error(
-#     sample=sample,
-#     ct=ct,
-#     max_steps=500,
-#     tc=tc,
-#     tree_filepath=f"/data/yuanwen/workspace/tmp/{num}/logical_tree.json",
-#     package_name=package_name,
-#     verbose=False,
-#     whether_recreate=False,
-#     save_filepath=f"{ct.MAIN_DIR}/fix_issue.txt",
-# )
-print(llm.query("你好", verbose=False))
+message = fix_github_error(
+    sample=sample,
+    ct=ct,
+    max_steps=300,
+    tc=tc,
+    package_name=package_name,
+    verbose=verbose,
+    whether_recreate=False,
+    save_filepath=f"{ct.MAIN_DIR}/fix_issue.patch",
+)
+# print(ct.func_reflect(text="""
+#                       检查补丁
+#                       diff --git a/astropy/io/fits/fitsrec.py b/astropy/io/fits/fitsrec.py
+# index 574b4073b1..aa0f23cb69 100644
+# --- a/astropy/io/fits/fitsrec.py
+# +++ b/astropy/io/fits/fitsrec.py
+# @@ -1261,7 +1261,7 @@ class FITS_rec(np.recarray):
+ 
+#          # Replace exponent separator in floating point numbers
+#          if 'D' in format:
+# -            output_field.replace(encode_ascii('E'), encode_ascii('D'))
+# +            output_field = output_field.replace(encode_ascii('E'), encode_ascii('D'))
+#                       """))
+# print(llm.query("你好", verbose=False))

@@ -616,7 +616,9 @@ class LLM:
         check_start_prompt: str = None,
         human_check_before_calling: bool = False,
     ) -> str:
-        dag = SummaryAttentionDAG(m_layers=1, llm=self, parent_window=5, verbose=verbose)
+        dag = SummaryAttentionDAG(
+            m_layers=2, llm=self, parent_window=3, verbose=verbose
+        )
         # 记录每个step生成的输出
         all_texts = []
         func_dict = {func.__name__: func for func in tools} if tools else {}
@@ -658,50 +660,61 @@ class LLM:
                             },
                         }
                     )
-            previous_tool_calls = tc.get_value()
-            previous_tool_calls_str = str(previous_tool_calls[max_chunk_id:])
-            # 将chunk添加进DAG
-            if len(previous_tool_calls_str) > tc.MAX_CHAR:
-                new_chunk = ""
-                backward_len = 0
-                for id in range(max_chunk_id - 1, -1, -1):
-                    backward_len += len(str(previous_tool_calls[id]))
-                    new_chunk = str(previous_tool_calls[id]) + new_chunk
-                    if previous_tool_calls[id].get("role") != "assistant":
-                        continue
-                    if backward_len > tc.MAX_CHAR / 5:
-                        break
-                forward_len = 0
-                for id in range(max_chunk_id, len(previous_tool_calls)):
-                    if forward_len > tc.MAX_CHAR / 2 and previous_tool_calls[id].get("role") == "assistant":
-                        max_chunk_id = id
-                        break
-                    forward_len += len(str(previous_tool_calls[id]))
-                    new_chunk = new_chunk + str(previous_tool_calls[id])
-                if verbose:
-                    log_webui(
-                        "DAG",
-                        [
-                            f"[STEP] {step}",
-                            f"[CHUNK LENGTH] {len(new_chunk)} chars",
-                            f"[BACKWARD LEN] {backward_len}, [FORWARD LEN] {forward_len}",
-                            f"[CHUNK BUILT FROM] tool_calls[{max_chunk_id - int(forward_len / len(str(previous_tool_calls[max_chunk_id])))}..{max_chunk_id}]",
-                            f"[PREVIOUS TOTAL NODES] {dag.N}",
-                        ],
-                        ec=self.ec,
+            while 1:
+                previous_tool_calls = tc.get_value()
+                previous_tool_calls_str = str(previous_tool_calls[max_chunk_id:])
+                # 将chunk添加进DAG
+                print([max_chunk_id, len(previous_tool_calls_str)])
+                if len(previous_tool_calls_str) > tc.MAX_CHAR:
+                    new_chunk = ""
+                    backward_len = 0
+                    for id in range(max_chunk_id - 1, -1, -1):
+                        backward_len += len(str(previous_tool_calls[id]))
+                        new_chunk = str(previous_tool_calls[id]) + new_chunk
+                        if previous_tool_calls[id].get("role") != "assistant":
+                            continue
+                        if backward_len > tc.MAX_CHAR / 5:
+                            break
+                    forward_len = 0
+                    for id in range(max_chunk_id, len(previous_tool_calls)):
+                        if (
+                            forward_len > tc.MAX_CHAR / 2
+                            and previous_tool_calls[id].get("role") == "assistant"
+                        ):
+                            max_chunk_id = id
+                            break
+                        forward_len += len(str(previous_tool_calls[id]))
+                        new_chunk = new_chunk + str(previous_tool_calls[id])
+                    print("[DAG]")
+                    if verbose:
+                        log_webui(
+                            "DAG",
+                            [
+                                f"[STEP] {step}",
+                                f"[CHUNK LENGTH] {len(new_chunk)} chars",
+                                f"[BACKWARD LEN] {backward_len}, [FORWARD LEN] {forward_len}",
+                                f"[CHUNK BUILT FROM] tool_calls[{max_chunk_id - int(forward_len / len(str(previous_tool_calls[max_chunk_id])))}..{max_chunk_id}]",
+                                f"[PREVIOUS TOTAL NODES] {dag.N}",
+                            ],
+                            ec=self.ec,
+                        )
+                        # print("\n[INFO] ======== DAG Chunk Append ========")
+                        # print(f"  [STEP] {step}")
+                        # print(f"  [CHUNK LENGTH] {len(new_chunk)} chars")
+                        # print(
+                        #     f"  [BACKWARD LEN] {backward_len}, [FORWARD LEN] {forward_len}"
+                        # )
+                        # print(
+                        #     f"  [CHUNK BUILT FROM] tool_calls[{max_chunk_id - int(forward_len / len(str(previous_tool_calls[max_chunk_id])))}..{max_chunk_id}]"
+                        # )
+                        # print(f"  [PREVIOUS TOTAL NODES] {dag.N}")
+                        # print("----------------------------------------")
+                    dag.add_chunk(new_chunk)
+                    dag.save_all_nodes_to_files(
+                        base_dir=os.path.join(tc.LOG_DIR, "dag")
                     )
-                    # print("\n[INFO] ======== DAG Chunk Append ========")
-                    # print(f"  [STEP] {step}")
-                    # print(f"  [CHUNK LENGTH] {len(new_chunk)} chars")
-                    # print(
-                    #     f"  [BACKWARD LEN] {backward_len}, [FORWARD LEN] {forward_len}"
-                    # )
-                    # print(
-                    #     f"  [CHUNK BUILT FROM] tool_calls[{max_chunk_id - int(forward_len / len(str(previous_tool_calls[max_chunk_id])))}..{max_chunk_id}]"
-                    # )
-                    # print(f"  [PREVIOUS TOTAL NODES] {dag.N}")
-                    # print("----------------------------------------")
-                dag.add_chunk(new_chunk)
+                else:
+                    break
 
             # 使用LLM执行主要任务（类似原来的 query_messages_with_tools）
             guidance = dag.get_last_neuron_value() or ""
@@ -841,6 +854,16 @@ class LLM:
                             print(repr(args))  # 用 repr 保留转义字符，防止打印不完整
                             print(f"[ERROR] 解析错误信息: {e}")
                             # raise e
+                            result = "Format error, please regenerate again!"
+                            # 添加 tool 响应，防止中断整个链
+                            new_tool_calls.append(
+                                {
+                                    "role": "tool",
+                                    "name": func_name,
+                                    "tool_call_id": call.get("id", ""),
+                                    "content": result,
+                                }
+                            )
                             continue
                     if verbose:
                         formatted_args = self._format_arguments_for_display(
@@ -881,6 +904,7 @@ class LLM:
                             result = func_dict[func_name](**args)
                         except Exception as e:
                             import traceback
+
                             tb = traceback.format_exc()
                             result = (
                                 f"[Error] Function '{func_name}' failed with exception: {e.__class__.__name__}: {e}\n"
@@ -919,6 +943,13 @@ class LLM:
                     }
                 )
 
+            # 过滤掉空 tool_calls 字段
+            safe_tool_calls = []
+            for c in new_tool_calls:
+                if isinstance(c, dict) and "tool_calls" in c and not c["tool_calls"]:
+                    c = {k: v for k, v in c.items() if k != "tool_calls"}
+                safe_tool_calls.append(c)
+
             tc.extend(new_tool_calls)
             if verbose:
                 self.ec.send_message(
@@ -948,7 +979,7 @@ class LLM:
         #     print(dag.export_json())
 
         return final_text
-    
+
     def query_with_local_memory(
         self,
         prompt: Union[str, Callable[[], str]],
@@ -973,6 +1004,7 @@ class LLM:
         """
         # 记录每个step生成的输出
         all_texts = []
+
         def update_num_list(remove_id: int, add_id: int) -> str:
             """
             Update the current num_list (memory file indices) by:
@@ -1009,7 +1041,7 @@ class LLM:
                 f"before_remove={before_remove}, after_remove={before_add}, final={num_list}; "
                 f"{removed_msg}; {added_msg}"
             )
-        
+
         tools.append(update_num_list)
         func_dict = {func.__name__: func for func in tools} if tools else {}
         num_list = list(range(1, memory_unit_number + 1))
@@ -1059,7 +1091,10 @@ class LLM:
                 "- Otherwise, all tool results will be lost after this step.\n"
                 f"Therefore, if you generate any intermediate conclusions, code outputs, or summaries that you might need later, please write them into a numbered memory file under '{local_memory_folder}'."
             )
-            memory_info = memory_info + f"\n\n\n**以下是以后完全不会保存的历史信息, 请你提取你认为有用, 使用func_write一系列函数的储存好**: \n{Tool_Calls.summarize_tool_calls(tc.get_value()+extra_guide_tool_call)}"
+            memory_info = (
+                memory_info
+                + f"\n\n\n**以下是以后完全不会保存的历史信息, 请你提取你认为有用, 使用func_write一系列函数的储存好**: \n{Tool_Calls.summarize_tool_calls(tc.get_value()+extra_guide_tool_call)}"
+            )
             # 3️⃣ 执行 query
             messages = [{"role": "user", "content": memory_info}]
             if verbose:
@@ -1098,7 +1133,9 @@ class LLM:
                 #     }
                 # )
             out_text, tool_calls = self.query_messages_with_tools(
-                messages + tc.get_value() + extra_guide_tool_call, tools=tools, verbose=verbose
+                messages + tc.get_value() + extra_guide_tool_call,
+                tools=tools,
+                verbose=verbose,
             )
             # if step%2 == 0:
             #     print("A")
@@ -1129,10 +1166,15 @@ class LLM:
             if len(tool_calls) == 0:
                 if verbose:
                     self.ec.send_message(
-                        {"type": "info", "data": {"category": "", "content": "", "level_delta": -1}}
+                        {
+                            "type": "info",
+                            "data": {"category": "", "content": "", "level_delta": -1},
+                        }
                     )
                 continue
-            new_tool_calls = [{"role": "assistant", "content": "", "tool_calls": tool_calls}]
+            new_tool_calls = [
+                {"role": "assistant", "content": "", "tool_calls": tool_calls}
+            ]
             for call in tool_calls:
                 if self.format == "ollama":
                     call = call["function"]
@@ -1148,7 +1190,9 @@ class LLM:
                             print("Raw args:", args)
                             continue
                     if verbose:
-                        formatted_args = self._format_arguments_for_display(func_name, args)
+                        formatted_args = self._format_arguments_for_display(
+                            func_name, args
+                        )
                         formatted_args = formatted_args.replace("\n", "\n    ")
                         self.ec.send_message(
                             {
@@ -1160,7 +1204,7 @@ class LLM:
                                 },
                             }
                         )
-                        
+
                     if human_check_before_calling and func_name not in [
                         "func_ls",
                         "func_cat",
@@ -1182,12 +1226,13 @@ class LLM:
                             result = func_dict[func_name](**args)
                         except Exception as e:
                             import traceback
+
                             tb = traceback.format_exc()
                             result = (
                                 f"[Error] Function '{func_name}' failed with exception: {e.__class__.__name__}: {e}\n"
                                 f"Traceback:\n{tb}"
                             )
-                        
+
                     if verbose:
                         self.ec.send_message(
                             {
@@ -1230,7 +1275,10 @@ class LLM:
 
             if verbose:
                 self.ec.send_message(
-                    {"type": "info", "data": {"category": "", "content": "", "level_delta": -1}}
+                    {
+                        "type": "info",
+                        "data": {"category": "", "content": "", "level_delta": -1},
+                    }
                 )
 
         final_text = "\n".join(all_texts)

@@ -4,6 +4,7 @@ import time
 import json
 import networkx as nx
 from src.utils.prompts import get_prompt
+import os
 
 
 @dataclass
@@ -91,6 +92,20 @@ class SummaryAttentionDAG:
             self._build_and_compute_node(layer=layer, idx=idx)
 
         self.N += 1
+        
+    def _apply_instruction_to_all_nodes(self, new_instruction: str) -> None:
+        """
+        将新的 instruction 强制应用到所有非叶子节点（layer>=1）。
+        """
+        for (layer, idx), data in self.G.nodes(data=True):
+            if layer == 0:
+                continue  # leaf nodes skip
+            param: NeuronParam = data["param"]
+            param.history.append(
+                f"GLOBAL_UPDATE v{param.version}->{param.version+1}"
+            )
+            param.version += 1
+            param.instruction = new_instruction
 
     def retrain_params_for_query(
         self,
@@ -99,6 +114,7 @@ class SummaryAttentionDAG:
         k_tail: int = 1,
         recompute: bool = True,
         propagate_upstream: bool = False,
+        apply_to_all: bool = False,
     ) -> List[Tuple[Tuple[int, int], str]]:
         """
         Given a user query (question), update parameters for the last k_tail neurons on the top_layer.
@@ -131,6 +147,16 @@ class SummaryAttentionDAG:
                 results.append((node_key, new_instr))
                 if recompute:
                     self._recompute_node_state(node_key)
+                    
+                if apply_to_all:
+                    if self.verbose:
+                        print("[INFO] Applying updated instruction to ALL neurons...")
+                    self._apply_instruction_to_all_nodes(new_instr)
+
+                    if recompute:
+                        if self.verbose:
+                            print("[INFO] Recomputing ALL states...")
+                        self.recompute_all_states()
 
                 if propagate_upstream:
                     # Lightly propose updates to direct parents
@@ -150,6 +176,19 @@ class SummaryAttentionDAG:
                                 self._recompute_node_state(p)
 
         return results
+    
+    def _inherit_instruction(self, layer: int, idx: int) -> str:
+        """
+        返回该层前一个节点的 instruction，如果不存在则使用 default_instruction。
+        """
+        if idx > 0:
+            prev_key = (layer, idx - 1)
+            if self.G.has_node(prev_key):
+                prev_param: NeuronParam = self.G.nodes[prev_key]["param"]
+                return prev_param.instruction
+
+        # 否则用 default
+        return self.default_instruction
 
     def answer(
         self, question: str, top_k_nodes: int = 3, top_layer: Optional[int] = None
@@ -223,7 +262,8 @@ class SummaryAttentionDAG:
 
     def _build_and_compute_node(self, layer: int, idx: int) -> None:
         key = (layer, idx)
-        param = NeuronParam(instruction=self.default_instruction)
+        instr = self._inherit_instruction(layer, idx)
+        param = NeuronParam(instruction=instr)
         self._add_node(layer, idx, param, state=None)
         # compute
         self._recompute_node_state(key)
@@ -446,3 +486,33 @@ class SummaryAttentionDAG:
 
         if self.verbose:
             print(f"[INFO] Recomputed {total} nodes in total (excluding layer 0).")
+            
+    def save_all_nodes_to_files(self, base_dir: str = "./neuron_dump") -> None:
+        """
+        将所有神经元节点（参数 + 状态）分别保存为独立 JSON 文件。
+        文件名格式：layer_{L}_idx_{i}.json
+        """
+        os.makedirs(base_dir, exist_ok=True)
+        count = 0
+
+        for (layer, idx), data in self.G.nodes(data=True):
+            param: NeuronParam = data["param"]
+            state: Optional[NeuronState] = data.get("state")
+
+            node_info = {
+                "layer": layer,
+                "index": idx,
+                "instruction": param.instruction,
+                "version": param.version,
+                "history": param.history,
+                "summary_text": state.summary_text if state else None,
+                "last_update_ts": state.last_update_ts if state else None,
+            }
+
+            path = os.path.join(base_dir, f"layer_{layer}_idx_{idx}.json")
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(node_info, f, ensure_ascii=False, indent=2)
+            count += 1
+
+        if self.verbose:
+            print(f"[SAVE] Save {count} nodes to {base_dir}.")

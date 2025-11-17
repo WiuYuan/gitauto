@@ -27,14 +27,14 @@ class ToolCallsDict(TypedDict):
 class Tool_Calls:
     def __init__(
         self,
-        PATH: str,
-        ENV_PATH: str,
+        LOG_DIR: str,
         MAX_CHAR: int,
         mode: str = Literal["Simple", "Summary"],
         UpdataFunc: Optional[Callable] = None,
     ):
-        self.PATH = Path(PATH)
-        self.ENV_PATH = Path(ENV_PATH)
+        self.LOG_DIR = Path(LOG_DIR)
+        self.LOG_DIR.mkdir(parents=True, exist_ok=True)
+        self.PATH = Path(os.path.join(self.LOG_DIR, "tool_calls.json"))
         self.MAX_CHAR = MAX_CHAR
         self.mode = mode
         self.UpdataFunc = UpdataFunc
